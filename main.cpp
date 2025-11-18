@@ -1,4 +1,4 @@
-﻿#include <iostream>
+#include <iostream>
 #include <vector>
 #include <cmath>
 #include <cstdlib>
@@ -14,7 +14,7 @@ struct Point {
 };
 
 
-// Creates CSV File of Clustered Data
+// Save points to CSV
 void savePointsToCSV(const vector<Point>& points, const string& filename="data.csv") {
     ofstream out(filename);
     out << "x,y,cluster\n"; // header
@@ -72,11 +72,10 @@ vector<Point> loadPointsFromFile(const string& filename="data.txt") {
 
 // K-Means clustering
 vector<Point> kMeans(vector<Point>& points, int k, float threshold=0.1f) {
-    vector<Point> centers(points.begin(), points.begin() + k);
     random_shuffle(points.begin(), points.end());
+    vector<Point> centers(points.begin(), points.begin() + k);
 
 
-    //Assign Data points to Cluster Centers Based on Distance
     float maxMove;
     do {
         // Assign clusters
@@ -93,8 +92,6 @@ vector<Point> kMeans(vector<Point>& points, int k, float threshold=0.1f) {
             p.cluster = cluster;
         }
 
-        //Calculate Geometric Mean of Cluster And Set Cluster Center to That Point
-        
         maxMove = 0;
         // Update centers
         for (int i = 0; i < k; ++i) {
@@ -115,13 +112,12 @@ vector<Point> kMeans(vector<Point>& points, int k, float threshold=0.1f) {
                 centers[i].y = newY;
             }
         }
-        //Check if Center has converged
     } while (maxMove > threshold);
 
     return centers;
 }
 
-// Generate Image of Data Set Pre Clustering
+// PPM of raw data
 void outputPPMDataOnly(const vector<Point>& points, int width=500, int height=500) {
     ofstream img("data_only.ppm");
     img << "P3\n" << width << " " << height << "\n255\n";
@@ -167,7 +163,7 @@ void outputPPMDataOnly(const vector<Point>& points, int width=500, int height=50
     cout << "PPM image saved as data_only.ppm" << endl;
 }
 
-// Generate Image After Clustering
+// PPM of clustered data
 void outputPPM(const vector<Point>& points, const vector<Point>& centers, int width=500, int height=500) {
     ofstream img("clusters.ppm");
     img << "P3\n" << width << " " << height << "\n255\n";
@@ -237,11 +233,9 @@ void outputPPM(const vector<Point>& points, const vector<Point>& centers, int wi
 
 
 int main() {
-    //Define Point Density If none Provided via Txt File
     int nPoints = 5000;
-    //Set Cluster Number
-    int k = 12;
-    //Create Vector to hold dataset
+    int k = 3;
+
     vector<Point> points;
 
     // Attempt to load points from file
@@ -252,13 +246,10 @@ int main() {
         points = generatePoints(nPoints);
         savePointsToFile(points, "data.txt");
     }
-    //output raw data set
+
     outputPPMDataOnly(points);
-    //Perform Clustering Algorithm
     vector<Point> centers = kMeans(points, k);
-    //output Clustered Dataset
     outputPPM(points, centers);
-    //OutPut Clustered Data
     savePointsToCSV(points);
     return 0;
 }

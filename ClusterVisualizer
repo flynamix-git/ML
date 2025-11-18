@@ -1,0 +1,256 @@
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class ClusterVisualizer : MonoBehaviour
+{
+    [Header("Scene Settings")]
+    public float spread = 10f;
+    public int kClusters = 3;
+    public int pointCount = 150;
+    public float pointSize = 0.2f;
+    public float centerSizeMultiplier = 2f;
+
+    [Header("Colors")]
+    public Color[] clusterColors = new Color[]
+    {
+        Color.red, Color.green, Color.blue, Color.yellow,
+        Color.magenta, Color.cyan, new Color(1f,0.5f,0f), new Color(0.5f,0f,1f)
+    };
+
+    [Header("Camera Settings")]
+    public float moveSpeed = 10f;
+    public float mouseSensitivity = 2f;
+
+    [Header("Clustering Settings")]
+    public float centerMoveSpeed = 3f;      // world units/sec
+    public float colorTransitionSpeed = 2f; // 0..inf, higher = faster color change
+    public float iterationDelay = 0.5f;     // seconds per k-means step
+
+    [Header("Self-Attracting Data Settings")]
+    [Range(0f,1f)] public float attractProb = 0.5f;
+    [Range(0f,1f)] public float attractStrength = 0.5f;
+    public float stdDev = 3f;
+
+    private List<GameObject> points = new List<GameObject>();
+    private List<GameObject> centers = new List<GameObject>();
+    private List<LineRenderer> lines = new List<LineRenderer>();
+    private List<Vector3> clusterPoints = new List<Vector3>();
+    private int[] assignments;
+
+    private float rotationX = 0f;
+    private float rotationY = 0f;
+    private bool clusteringRunning = false;
+
+    void Start()
+    {
+        GenerateSelfAttractingData();
+        SpawnPoints();
+        SpawnCenters();
+        SpawnLines();
+
+        StartCoroutine(RunClustering());
+    }
+
+    void GenerateSelfAttractingData()
+    {
+        clusterPoints = new List<Vector3>();
+        for (int i = 0; i < pointCount; i++)
+        {
+            Vector3 p = new Vector3(
+                RandomNormal() * stdDev,
+                RandomNormal() * stdDev,
+                RandomNormal() * stdDev
+            );
+
+            if (clusterPoints.Count > 0 && Random.value < attractProb)
+            {
+                // pick 1-3 random existing points to lean toward
+                int n = Random.Range(1, Mathf.Min(4, clusterPoints.Count + 1));
+                Vector3 avg = Vector3.zero;
+                for (int j = 0; j < n; j++)
+                {
+                    avg += clusterPoints[Random.Range(0, clusterPoints.Count)];
+                }
+                avg /= n;
+                p = Vector3.Lerp(p, avg, attractStrength);
+            }
+
+            clusterPoints.Add(p);
+        }
+
+        // normalize & center to [-spread, +spread]
+        Vector3 min = clusterPoints[0], max = clusterPoints[0];
+        foreach (var v in clusterPoints)
+        {
+            min = Vector3.Min(min, v);
+            max = Vector3.Max(max, v);
+        }
+
+        for (int i = 0; i < clusterPoints.Count; i++)
+        {
+            Vector3 v = clusterPoints[i];
+            Vector3 norm = new Vector3(
+                (v.x - min.x) / (max.x - min.x),
+                (v.y - min.y) / (max.y - min.y),
+                (v.z - min.z) / (max.z - min.z)
+            );
+            clusterPoints[i] = (norm - Vector3.one * 0.5f) * 2f * spread;
+        }
+
+        assignments = new int[clusterPoints.Count];
+    }
+
+    float RandomNormal(float mean = 0f, float std = 1f)
+    {
+        float u1 = 1.0f - Random.value;
+        float u2 = 1.0f - Random.value;
+        float randStdNormal = Mathf.Sqrt(-2.0f * Mathf.Log(u1)) *
+                              Mathf.Sin(2.0f * Mathf.PI * u2);
+        return mean + std * randStdNormal;
+    }
+
+    void SpawnPoints()
+    {
+        foreach (var pos in clusterPoints)
+        {
+            GameObject p = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            p.transform.position = pos;
+            p.transform.localScale = Vector3.one * pointSize;
+            p.GetComponent<MeshRenderer>().material = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+            p.GetComponent<MeshRenderer>().material.color = Color.gray;
+            points.Add(p);
+        }
+    }
+
+    void SpawnCenters()
+    {
+        System.Random rand = new System.Random();
+        HashSet<int> used = new HashSet<int>();
+        for (int i = 0; i < kClusters; i++)
+        {
+            int idx;
+            do { idx = rand.Next(points.Count); } while (used.Contains(idx));
+            used.Add(idx);
+
+            GameObject c = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            c.transform.position = points[idx].transform.position;
+            c.transform.localScale = Vector3.one * pointSize * centerSizeMultiplier;
+            var mat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+            mat.color = clusterColors[i % clusterColors.Length];
+            c.GetComponent<Renderer>().material = mat;
+            centers.Add(c);
+        }
+    }
+
+    void SpawnLines()
+    {
+        foreach (var p in points)
+        {
+            GameObject go = new GameObject("Line");
+            LineRenderer lr = go.AddComponent<LineRenderer>();
+            lr.startWidth = 0.12f;
+            lr.endWidth = 0.12f;
+            lr.material = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
+            lr.positionCount = 2;
+            lines.Add(lr);
+        }
+    }
+
+    void Update()
+    {
+        HandleCamera();
+
+        for (int i = 0; i < points.Count; i++)
+        {
+            int cluster = assignments[i];
+            Color targetColor = clusterColors[cluster % clusterColors.Length];
+
+            // Smooth color transition
+            MeshRenderer rend = points[i].GetComponent<MeshRenderer>();
+            rend.material.color = Color.Lerp(rend.material.color, targetColor, Time.deltaTime * colorTransitionSpeed);
+
+            // Update line positions and color
+            LineRenderer lr = lines[i];
+            lr.SetPosition(0, points[i].transform.position);
+            lr.SetPosition(1, centers[cluster].transform.position);
+            lr.material.color = rend.material.color;
+        }
+    }
+
+    void HandleCamera()
+    {
+        rotationX += Input.GetAxis("Mouse X") * mouseSensitivity;
+        rotationY -= Input.GetAxis("Mouse Y") * mouseSensitivity;
+        rotationY = Mathf.Clamp(rotationY, -90f, 90f);
+        Camera.main.transform.rotation = Quaternion.Euler(rotationY, rotationX, 0);
+
+        Vector3 move = Vector3.zero;
+        if (Input.GetKey(KeyCode.W)) move += Camera.main.transform.forward;
+        if (Input.GetKey(KeyCode.S)) move -= Camera.main.transform.forward;
+        if (Input.GetKey(KeyCode.A)) move -= Camera.main.transform.right;
+        if (Input.GetKey(KeyCode.D)) move += Camera.main.transform.right;
+        if (Input.GetKey(KeyCode.Q)) move -= Camera.main.transform.up;
+        if (Input.GetKey(KeyCode.E)) move += Camera.main.transform.up;
+        Camera.main.transform.position += move * moveSpeed * Time.deltaTime;
+    }
+
+    IEnumerator RunClustering()
+    {
+        clusteringRunning = true;
+        bool changed;
+
+        do
+        {
+            changed = false;
+
+            // Assign points to nearest center
+            for (int i = 0; i < clusterPoints.Count; i++)
+            {
+                float minDist = Vector3.Distance(clusterPoints[i], centers[0].transform.position);
+                int cluster = 0;
+                for (int j = 1; j < kClusters; j++)
+                {
+                    float d = Vector3.Distance(clusterPoints[i], centers[j].transform.position);
+                    if (d < minDist)
+                    {
+                        minDist = d;
+                        cluster = j;
+                    }
+                }
+                if (assignments[i] != cluster) changed = true;
+                assignments[i] = cluster;
+            }
+
+            // Compute new cluster centers
+            Vector3[] newCenters = new Vector3[kClusters];
+            int[] counts = new int[kClusters];
+            for (int i = 0; i < clusterPoints.Count; i++)
+            {
+                newCenters[assignments[i]] += clusterPoints[i];
+                counts[assignments[i]]++;
+            }
+            for (int i = 0; i < kClusters; i++)
+            {
+                if (counts[i] > 0)
+                    newCenters[i] /= counts[i];
+            }
+
+            // Smoothly move centers to new positions over iterationDelay
+            float elapsed = 0f;
+            while (elapsed < iterationDelay)
+            {
+                elapsed += Time.deltaTime;
+                for (int i = 0; i < kClusters; i++)
+                {
+                    centers[i].transform.position = Vector3.Lerp(centers[i].transform.position, newCenters[i], elapsed / iterationDelay);
+                }
+                yield return null;
+            }
+
+        } while (changed);
+
+        clusteringRunning = false;
+        Debug.Log("Clustering complete!");
+    }
+}
